@@ -1,0 +1,323 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "dataFactoryName": {
+            "type": "string",
+            "defaultValue": "adf-saudi-retail-vision2030"
+        },
+        "storageAccountName": {
+            "type": "string",
+            "defaultValue": "dlssaudiretailvision"
+        }
+    },
+    "variables": {},
+    "resources": [
+        {
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "name": "[concat(parameters('dataFactoryName'), '/retail-data-ingestion-pipeline')]",
+            "properties": {
+                "description": "ELT pipeline for Saudi retail company - Vision 2030 aligned",
+                "activities": [
+                    {
+                        "name": "CopyPOSData",
+                        "type": "Copy",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 3,
+                            "retryIntervalInSeconds": 30
+                        },
+                        "userProperties": [
+                            {
+                                "name": "Source",
+                                "value": "POS_SYSTEMS"
+                            },
+                            {
+                                "name": "Destination",
+                                "value": "ADLS_RAW_LAYER"
+                            }
+                        ],
+                        "typeProperties": {
+                            "source": {
+                                "type": "SqlServerSource",
+                                "sqlReaderQuery": "SELECT \n    transaction_id,\n    store_id,\n    customer_id,\n    product_id,\n    quantity,\n    unit_price,\n    total_amount,\n    payment_method,\n    transaction_timestamp,\n    cashier_id,\n    loyalty_points_earned,\n    discount_amount,\n    vat_amount,\n    city,\n    region\nFROM pos_transactions \nWHERE transaction_timestamp >= DATEADD(day, -1, CAST(GETDATE() AS DATE))\nAND transaction_timestamp < CAST(GETDATE() AS DATE)",
+                                "queryTimeout": "02:00:00",
+                                "partitionOption": "None"
+                            },
+                            "sink": {
+                                "type": "ParquetSink",
+                                "storeSettings": {
+                                    "type": "AzureBlobFSWriteSettings"
+                                },
+                                "formatSettings": {
+                                    "type": "ParquetWriteSettings"
+                                }
+                            },
+                            "enableStaging": false,
+                            "parallelCopies": 4,
+                            "dataIntegrationUnits": 4,
+                            "translator": {
+                                "type": "TabularTranslator",
+                                "typeConversion": true,
+                                "typeConversionSettings": {
+                                    "allowDataTruncation": true,
+                                    "treatBooleanAsNumber": false
+                                }
+                            }
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "POS_SqlServer_Dataset",
+                                "type": "DatasetReference"
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "POS_Parquet_Dataset",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "year": "@formatDateTime(utcnow(), 'yyyy')",
+                                    "month": "@formatDateTime(utcnow(), 'MM')",
+                                    "day": "@formatDateTime(utcnow(), 'dd')"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "name": "CopyCRMData",
+                        "type": "Copy",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 3,
+                            "retryIntervalInSeconds": 30
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "AzureSqlSource",
+                                "sqlReaderQuery": "SELECT \n    customer_id,\n    first_name,\n    last_name,\n    email,\n    phone,\n    date_of_birth,\n    gender,\n    registration_date,\n    loyalty_tier,\n    total_lifetime_value,\n    last_purchase_date,\n    preferred_language,\n    city,\n    region,\n    nationality,\n    updated_at\nFROM customers \nWHERE updated_at >= DATEADD(day, -1, CAST(GETDATE() AS DATE))",
+                                "queryTimeout": "02:00:00",
+                                "partitionOption": "None"
+                            },
+                            "sink": {
+                                "type": "ParquetSink",
+                                "storeSettings": {
+                                    "type": "AzureBlobFSWriteSettings"
+                                },
+                                "formatSettings": {
+                                    "type": "ParquetWriteSettings"
+                                }
+                            },
+                            "enableStaging": false,
+                            "parallelCopies": 2
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "CRM_AzureSQL_Dataset",
+                                "type": "DatasetReference"
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "CRM_Parquet_Dataset",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "year": "@formatDateTime(utcnow(), 'yyyy')",
+                                    "month": "@formatDateTime(utcnow(), 'MM')",
+                                    "day": "@formatDateTime(utcnow(), 'dd')"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "name": "CopySupplyChainData",
+                        "type": "Copy",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 3,
+                            "retryIntervalInSeconds": 30
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "RestSource",
+                                "httpRequestTimeout": "00:01:40",
+                                "requestInterval": 10,
+                                "additionalHeaders": {
+                                    "Authorization": "@concat('Bearer ', linkedService().apiKey)"
+                                }
+                            },
+                            "sink": {
+                                "type": "JsonSink",
+                                "storeSettings": {
+                                    "type": "AzureBlobFSWriteSettings"
+                                },
+                                "formatSettings": {
+                                    "type": "JsonWriteSettings"
+                                }
+                            },
+                            "enableStaging": false
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "SupplyChain_REST_Dataset",
+                                "type": "DatasetReference"
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "SupplyChain_JSON_Dataset",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "year": "@formatDateTime(utcnow(), 'yyyy')",
+                                    "month": "@formatDateTime(utcnow(), 'MM')",
+                                    "day": "@formatDateTime(utcnow(), 'dd')"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "name": "ValidateDataQuality",
+                        "type": "ExecutePipeline",
+                        "dependsOn": [
+                            {
+                                "activity": "CopyPOSData",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            },
+                            {
+                                "activity": "CopyCRMData",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            },
+                            {
+                                "activity": "CopySupplyChainData",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "pipeline": {
+                                "referenceName": "data-quality-validation-pipeline",
+                                "type": "PipelineReference"
+                            },
+                            "waitOnCompletion": true,
+                            "parameters": {
+                                "execution_date": "@utcnow()"
+                            }
+                        }
+                    },
+                    {
+                        "name": "TriggerDBTTransformation",
+                        "type": "WebActivity",
+                        "dependsOn": [
+                            {
+                                "activity": "ValidateDataQuality",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 30
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "url": "https://api.github.com/repos/saudi-retail/dbt-models/dispatches",
+                            "method": "POST",
+                            "headers": {
+                                "Authorization": "@concat('token ', linkedService().githubToken)",
+                                "Accept": "application/vnd.github.v3+json"
+                            },
+                            "body": {
+                                "event_type": "adf-data-ingestion-complete",
+                                "client_payload": {
+                                    "execution_date": "@utcnow()",
+                                    "data_sources": ["pos", "crm", "supply_chain"],
+                                    "vision_2030_alignment": true
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "name": "UpdateDataLineage",
+                        "type": "AzureFunctionActivity",
+                        "dependsOn": [
+                            {
+                                "activity": "TriggerDBTTransformation",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 30
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "functionName": "UpdateDataLineage",
+                            "method": "POST",
+                            "body": {
+                                "pipeline_run_id": "@pipeline().RunId",
+                                "execution_date": "@utcnow()",
+                                "data_sources": ["pos_transactions", "customers", "supply_chain_data"],
+                                "target_tables": ["raw.pos_transactions", "raw.customers", "raw.supply_chain"],
+                                "compliance_framework": "vision_2030"
+                            }
+                        },
+                        "linkedServiceName": {
+                            "referenceName": "AzureFunction_DataGovernance",
+                            "type": "LinkedServiceReference"
+                        }
+                    }
+                ],
+                "parameters": {
+                    "execution_date": {
+                        "type": "string",
+                        "defaultValue": "@utcnow()"
+                    }
+                },
+                "variables": {
+                    "vision_2030_kpis": {
+                        "type": "Array",
+                        "defaultValue": [
+                            "local_content_percentage",
+                            "sme_participation_rate",
+                            "digital_transformation_score",
+                            "customer_satisfaction_index"
+                        ]
+                    }
+                },
+                "annotations": [
+                    {
+                        "key": "purpose",
+                        "value": "Saudi Vision 2030 retail analytics pipeline"
+                    },
+                    {
+                        "key": "data_classification",
+                        "value": "confidential"
+                    },
+                    {
+                        "key": "retention_policy",
+                        "value": "7_years"
+                    }
+                ],
+                "folder": {
+                    "name": "Vision2030/RetailAnalytics"
+                }
+            }
+        }
+    ]
+}

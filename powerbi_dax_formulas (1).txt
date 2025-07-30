@@ -1,0 +1,335 @@
+-- Power BI DAX Measures for Saudi Retail Analytics - Vision 2030 Aligned
+
+-- =============================================
+-- REVENUE & PROFITABILITY MEASURES
+-- =============================================
+
+-- Total Revenue (Current Period)
+Total Revenue = 
+SUMX(
+    fct_transactions,
+    fct_transactions[total_amount]
+)
+
+-- Revenue Growth Rate (YoY)
+Revenue Growth Rate = 
+VAR CurrentYearRevenue = 
+    CALCULATE(
+        [Total Revenue],
+        YEAR(fct_transactions[transaction_date]) = YEAR(TODAY())
+    )
+VAR PreviousYearRevenue = 
+    CALCULATE(
+        [Total Revenue],
+        YEAR(fct_transactions[transaction_date]) = YEAR(TODAY()) - 1
+    )
+RETURN
+    DIVIDE(
+        CurrentYearRevenue - PreviousYearRevenue,
+        PreviousYearRevenue,
+        0
+    )
+
+-- Gross Profit Margin
+Gross Profit Margin = 
+VAR TotalRevenue = [Total Revenue]
+VAR TotalCOGS = 
+    SUMX(
+        fct_transactions,
+        fct_transactions[quantity] * RELATED(dim_products[cost_per_unit])
+    )
+RETURN
+    DIVIDE(TotalRevenue - TotalCOGS, TotalRevenue, 0)
+
+-- =============================================
+-- CUSTOMER LOYALTY & ENGAGEMENT MEASURES
+-- =============================================
+
+-- Customer Retention Rate
+Customer Retention Rate = 
+VAR CurrentPeriodCustomers = 
+    DISTINCTCOUNT(fct_transactions[customer_id])
+VAR PreviousPeriodCustomers = 
+    CALCULATE(
+        DISTINCTCOUNT(fct_transactions[customer_id]),
+        DATEADD(fct_transactions[transaction_date], -1, YEAR)
+    )
+VAR RetainedCustomers = 
+    CALCULATE(
+        DISTINCTCOUNT(fct_transactions[customer_id]),
+        FILTER(
+            ALL(fct_transactions),
+            fct_transactions[customer_id] IN VALUES(fct_transactions[customer_id])
+            && YEAR(fct_transactions[transaction_date]) = YEAR(TODAY()) - 1
+        )
+    )
+RETURN
+    DIVIDE(RetainedCustomers, PreviousPeriodCustomers, 0)
+
+-- Average Customer Lifetime Value
+Average CLV = 
+AVERAGEX(
+    customer_loyalty_kpis,
+    customer_loyalty_kpis[estimated_annual_clv]
+)
+
+-- Loyalty Program Effectiveness
+Loyalty Points Redemption Rate = 
+VAR TotalPointsEarned = SUM(fct_transactions[loyalty_points_earned])
+VAR TotalPointsRedeemed = SUM(fct_loyalty_redemptions[points_redeemed])
+RETURN
+    DIVIDE(TotalPointsRedeemed, TotalPointsEarned, 0)
+
+-- Net Promoter Score (NPS)
+Net Promoter Score = 
+VAR PromoterCount = 
+    CALCULATE(
+        DISTINCTCOUNT(customer_feedback[customer_id]),
+        customer_feedback[nps_score] >= 9
+    )
+VAR DetractorCount = 
+    CALCULATE(
+        DISTINCTCOUNT(customer_feedback[customer_id]),
+        customer_feedback[nps_score] <= 6
+    )
+VAR TotalResponses = DISTINCTCOUNT(customer_feedback[customer_id])
+RETURN
+    DIVIDE(PromoterCount - DetractorCount, TotalResponses, 0) * 100
+
+-- =============================================
+-- INVENTORY & SUPPLY CHAIN MEASURES
+-- =============================================
+
+-- Inventory Turnover Ratio
+Inventory Turnover = 
+VAR COGS = 
+    SUMX(
+        fct_transactions,
+        fct_transactions[quantity] * RELATED(dim_products[cost_per_unit])
+    )
+VAR AvgInventoryValue = 
+    AVERAGEX(
+        dim_products,
+        dim_products[current_stock] * dim_products[cost_per_unit]
+    )
+RETURN
+    DIVIDE(COGS, AvgInventoryValue, 0)
+
+-- Stock Availability Rate
+Stock Availability Rate = 
+VAR TotalSKUs = DISTINCTCOUNT(dim_products[product_id])
+VAR InStockSKUs = 
+    CALCULATE(
+        DISTINCTCOUNT(dim_products[product_id]),
+        dim_products[current_stock] > 0
+    )
+RETURN
+    DIVIDE(InStockSKUs, TotalSKUs, 0)
+
+-- Days Sales Outstanding (DSO)
+Days Sales Outstanding = 
+VAR AccountsReceivable = SUM(fct_ar_aging[outstanding_amount])
+VAR DailyRevenue = DIVIDE([Total Revenue], 365)
+RETURN
+    DIVIDE(AccountsReceivable, DailyRevenue, 0)
+
+-- =============================================
+-- VISION 2030 SPECIFIC KPIs
+-- =============================================
+
+-- Digital Transformation Score
+Digital Adoption Rate = 
+VAR DigitalTransactions = 
+    CALCULATE(
+        COUNTROWS(fct_transactions),
+        fct_transactions[payment_method] IN {"MADA", "DIGITAL_WALLET", "CONTACTLESS", "ONLINE"}
+    )
+VAR TotalTransactions = COUNTROWS(fct_transactions)
+RETURN
+    DIVIDE(DigitalTransactions, TotalTransactions, 0)
+
+-- Local Content Percentage (Saudi suppliers)
+Local Content Percentage = 
+VAR LocalSupplierRevenue = 
+    CALCULATE(
+        [Total Revenue],
+        RELATED(dim_suppliers[country]) = "Saudi Arabia"
+    )
+RETURN
+    DIVIDE(LocalSupplierRevenue, [Total Revenue], 0)
+
+-- SME Participation Rate
+SME Participation = 
+VAR SMERevenue = 
+    CALCULATE(
+        [Total Revenue],
+        RELATED(dim_suppliers[business_size]) = "SME"
+    )
+RETURN
+    DIVIDE(SMERevenue, [Total Revenue], 0)
+
+-- Women Employment Rate
+Women Employment Rate = 
+VAR FemaleEmployees = 
+    CALCULATE(
+        DISTINCTCOUNT(dim_employees[employee_id]),
+        dim_employees[gender] = "Female"
+    )
+VAR TotalEmployees = DISTINCTCOUNT(dim_employees[employee_id])
+RETURN
+    DIVIDE(FemaleEmployees, TotalEmployees, 0)
+
+-- =============================================
+-- OPERATIONAL EFFICIENCY MEASURES
+-- =============================================
+
+-- Same Store Sales Growth
+Same Store Sales Growth = 
+VAR CurrentYearSales = 
+    CALCULATE(
+        [Total Revenue],
+        YEAR(fct_transactions[transaction_date]) = YEAR(TODAY())
+    )
+VAR PreviousYearSales = 
+    CALCULATE(
+        [Total Revenue],
+        YEAR(fct_transactions[transaction_date]) = YEAR(TODAY()) - 1,
+        dim_stores[opening_date] <= DATE(YEAR(TODAY()) - 1, 12, 31)
+    )
+RETURN
+    DIVIDE(CurrentYearSales - PreviousYearSales, PreviousYearSales, 0)
+
+-- Employee Productivity
+Revenue per Employee = 
+DIVIDE(
+    [Total Revenue],
+    DISTINCTCOUNT(dim_employees[employee_id])
+)
+
+-- Customer Acquisition Cost (CAC)
+Customer Acquisition Cost = 
+VAR MarketingSpend = SUM(fct_marketing_spend[amount])
+VAR NewCustomers = 
+    CALCULATE(
+        DISTINCTCOUNT(fct_transactions[customer_id]),
+        dim_customers[registration_date] >= STARTOFYEAR(TODAY())
+    )
+RETURN
+    DIVIDE(MarketingSpend, NewCustomers, 0)
+
+-- =============================================
+-- REGIONAL PERFORMANCE MEASURES
+-- =============================================
+
+-- Regional Market Share
+Regional Market Share = 
+VAR RegionalRevenue = [Total Revenue]
+VAR TotalMarketRevenue = 
+    CALCULATE(
+        [Total Revenue],
+        ALL(dim_stores[region])
+    )
+RETURN
+    DIVIDE(RegionalRevenue, TotalMarketRevenue, 0)
+
+-- Cross-Region Sales Distribution
+Cross Region Sales = 
+VAR CustomerRegion = SELECTEDVALUE(dim_customers[region])
+VAR StoreRegion = SELECTEDVALUE(dim_stores[region])
+RETURN
+    IF(
+        CustomerRegion <> StoreRegion,
+        [Total Revenue],
+        0
+    )
+
+-- =============================================
+-- CUSTOMER SEGMENTATION MEASURES
+-- =============================================
+
+-- High Value Customer Revenue
+HVC Revenue Contribution = 
+CALCULATE(
+    [Total Revenue],
+    customer_loyalty_kpis[loyalty_tier] IN {"VIP", "GOLD"}
+)
+
+-- Customer Segment Distribution
+Customer Count by Segment = 
+SWITCH(
+    SELECTEDVALUE(customer_loyalty_kpis[customer_segment]),
+    "CHAMPIONS", 
+        CALCULATE(
+            DISTINCTCOUNT(customer_loyalty_kpis[customer_id]),
+            customer_loyalty_kpis[customer_segment] = "CHAMPIONS"
+        ),
+    "LOYAL_CUSTOMERS",
+        CALCULATE(
+            DISTINCTCOUNT(customer_loyalty_kpis[customer_id]),
+            customer_loyalty_kpis[customer_segment] = "LOYAL_CUSTOMERS"
+        ),
+    "AT_RISK",
+        CALCULATE(
+            DISTINCTCOUNT(customer_loyalty_kpis[customer_id]),
+            customer_loyalty_kpis[customer_segment] = "AT_RISK"
+        ),
+    DISTINCTCOUNT(customer_loyalty_kpis[customer_id])
+)
+
+-- =============================================
+-- DYNAMIC TIME INTELLIGENCE MEASURES
+-- =============================================
+
+-- Revenue Trend (Month over Month)
+Revenue MoM = 
+VAR CurrentMonthRevenue = [Total Revenue]
+VAR PreviousMonthRevenue = 
+    CALCULATE(
+        [Total Revenue],
+        DATEADD(fct_transactions[transaction_date], -1, MONTH)
+    )
+RETURN
+    DIVIDE(CurrentMonthRevenue - PreviousMonthRevenue, PreviousMonthRevenue, 0)
+
+-- YTD vs Previous YTD
+Revenue YTD = 
+CALCULATE(
+    [Total Revenue],
+    DATESYTD(fct_transactions[transaction_date])
+)
+
+Revenue Previous YTD = 
+CALCULATE(
+    [Total Revenue],
+    DATESYTD(
+        DATEADD(fct_transactions[transaction_date], -1, YEAR)
+    )
+)
+
+-- =============================================
+-- COMPLIANCE & GOVERNANCE MEASURES
+-- =============================================
+
+-- Data Quality Score
+Data Completeness Rate = 
+VAR TotalRecords = COUNTROWS(fct_transactions)
+VAR CompleteRecords = 
+    COUNTROWS(
+        FILTER(
+            fct_transactions,
+            NOT ISBLANK(fct_transactions[customer_id])
+            && NOT ISBLANK(fct_transactions[product_id])
+            && NOT ISBLANK(fct_transactions[total_amount])
+        )
+    )
+RETURN
+    DIVIDE(CompleteRecords, TotalRecords, 0)
+
+-- Vision 2030 Compliance Score
+Vision 2030 Compliance = 
+VAR DigitalScore = [Digital Adoption Rate] * 0.3
+VAR LocalContentScore = [Local Content Percentage] * 0.3
+VAR SMEScore = [SME Participation] * 0.2
+VAR WomenEmploymentScore = [Women Employment Rate] * 0.2
+RETURN
+    DigitalScore + LocalContentScore + SMEScore + WomenEmploymentScore

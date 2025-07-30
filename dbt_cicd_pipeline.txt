@@ -1,0 +1,161 @@
+# GitHub Actions CI/CD Pipeline for dbt
+name: dbt-deployment-pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    paths: 
+      - 'dbt/**'
+      - '.github/workflows/dbt-deployment.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'dbt/**'
+
+env:
+  DBT_PROFILES_DIR: ${{ github.workspace }}
+  SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+  SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+  SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+  SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+  SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+  SNOWFLAKE_DATABASE: SAUDI_RETAIL_DW
+
+jobs:
+  dbt-test-and-deploy:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        environment: [dev, staging, prod]
+        
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        pip install dbt-snowflake==1.7.0
+        pip install dbt-core==1.7.0
+        pip install pre-commit
+        
+    - name: Setup dbt profile
+      run: |
+        mkdir -p ~/.dbt
+        cat > ~/.dbt/profiles.yml << EOF
+        saudi_retail:
+          target: ${{ matrix.environment }}
+          outputs:
+            dev:
+              type: snowflake
+              account: ${{ env.SNOWFLAKE_ACCOUNT }}
+              user: ${{ env.SNOWFLAKE_USER }}
+              password: ${{ env.SNOWFLAKE_PASSWORD }}
+              role: DBT_DEV_ROLE
+              database: SAUDI_RETAIL_DEV
+              warehouse: DBT_DEV_WH
+              schema: analytics
+              threads: 4
+            staging:
+              type: snowflake
+              account: ${{ env.SNOWFLAKE_ACCOUNT }}
+              user: ${{ env.SNOWFLAKE_USER }}
+              password: ${{ env.SNOWFLAKE_PASSWORD }}
+              role: DBT_STAGING_ROLE
+              database: SAUDI_RETAIL_STAGING
+              warehouse: DBT_STAGING_WH
+              schema: analytics
+              threads: 8
+            prod:
+              type: snowflake
+              account: ${{ env.SNOWFLAKE_ACCOUNT }}
+              user: ${{ env.SNOWFLAKE_USER }}
+              password: ${{ env.SNOWFLAKE_PASSWORD }}
+              role: DBT_PROD_ROLE
+              database: SAUDI_RETAIL_DW
+              warehouse: DBT_PROD_WH
+              schema: analytics
+              threads: 12
+        EOF
+        
+    - name: dbt Debug
+      run: |
+        cd dbt
+        dbt debug --target ${{ matrix.environment }}
+        
+    - name: Install dbt dependencies
+      run: |
+        cd dbt
+        dbt deps --target ${{ matrix.environment }}
+        
+    - name: Run dbt source freshness check
+      if: matrix.environment == 'prod'
+      run: |
+        cd dbt
+        dbt source freshness --target ${{ matrix.environment }}
+        
+    - name: Run dbt models (slim CI for PR)
+      if: github.event_name == 'pull_request'
+      run: |
+        cd dbt
+        dbt run --target dev --select state:modified+ --defer --state ./target
+        dbt test --target dev --select state:modified+ --defer --state ./target
+        
+    - name: Run dbt models (full deployment)
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: |
+        cd dbt
+        dbt run --target ${{ matrix.environment }} --full-refresh
+        dbt test --target ${{ matrix.environment }}
+        
+    - name: Generate and upload dbt docs
+      if: matrix.environment == 'prod' && github.ref == 'refs/heads/main'
+      run: |
+        cd dbt
+        dbt docs generate --target ${{ matrix.environment }}
+        # Upload to Azure Blob Storage or S3 for hosting
+        
+    - name: Data Quality Checks
+      if: matrix.environment == 'prod'
+      run: |
+        cd dbt
+        # Run custom data quality tests
+        dbt run-operation validate_kpi_metrics
+        dbt run-operation check_data_freshness
+        
+    - name: Notification on failure
+      if: failure()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: failure
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        text: "❌ dbt deployment failed for ${{ matrix.environment }} environment"
+        
+    - name: Notification on success
+      if: success() && matrix.environment == 'prod'
+      uses: 8398a7/action-slack@v3
+      with:
+        status: success
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        text: "✅ dbt models successfully deployed to production"
+
+  data-lineage-update:
+    needs: dbt-test-and-deploy
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Update Data Catalog
+      run: |
+        # Update Azure Purview or custom data catalog with lineage information
+        python scripts/update_data_lineage.py
+        
+    - name: Validate compliance with Vision 2030 KPIs
+      run: |
+        # Check if models align with Saudi Vision 2030 metrics
+        python scripts/validate_vision2030_compliance.py
